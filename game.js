@@ -1,0 +1,1325 @@
+// 迷宫探险游戏
+
+class SoundManager {
+  constructor() {
+    this.audioContext = null;
+    this.masterGain = null;
+    this.sfxVolume = 0.5;
+    this.isMuted = false;
+    this.initialized = false;
+  }
+
+  // 初始化 AudioContext（需要用户交互触发）
+  init() {
+    if (this.initialized) return;
+
+    try {
+      this.audioContext = new (
+        window.AudioContext || window.webkitAudioContext
+      )();
+      this.masterGain = this.audioContext.createGain();
+      this.masterGain.gain.value = this.sfxVolume;
+      this.masterGain.connect(this.audioContext.destination);
+      this.initialized = true;
+    } catch (e) {
+      console.warn("Web Audio API 不支持:", e);
+    }
+  }
+
+  // 确保 AudioContext 已就绪
+  ensureContext() {
+    if (!this.initialized) this.init();
+    if (!this.audioContext) return null;
+    if (this.audioContext.state === "suspended") {
+      this.audioContext.resume();
+    }
+    return this.audioContext;
+  }
+
+  // 播放合成音效
+  playTone(frequency, type, duration, slideTo = null) {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(frequency, now);
+    if (slideTo) {
+      oscillator.frequency.linearRampToValueAtTime(slideTo, now + duration);
+    }
+
+    gainNode.connect(this.masterGain);
+    oscillator.connect(gainNode);
+
+    gainNode.gain.setValueAtTime(this.sfxVolume, now);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, now + duration);
+
+    oscillator.start(now);
+    oscillator.stop(now + duration);
+  }
+
+  // 播放移动音效（短促的"哒哒"声）
+  playMove() {
+    this.playTone(200 + Math.random() * 50, "sine", 0.08);
+  }
+
+  // 播放星星音效（清脆的上行音阶）
+  playStar() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+
+      osc.frequency.setValueAtTime(freq, now + i * 0.1);
+      gain.gain.setValueAtTime(0.3, now + i * 0.1);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.1 + 0.2);
+
+      osc.start(now + i * 0.1);
+      osc.stop(now + i * 0.1 + 0.2);
+    });
+  }
+
+  // 播放障碍物音效（沉闷的撞击声）
+  playObstacle() {
+    this.playTone(150, "square", 0.15);
+  }
+
+  // 播放胜利音效（简单上升音调）
+  playWin() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    // 简单上升音调表示胜利
+    [523.25, 659.25, 783.99].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+
+      osc.frequency.setValueAtTime(freq, now + i * 0.15);
+      gain.gain.setValueAtTime(0.3, now + i * 0.15);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.15 + 0.2);
+
+      osc.start(now + i * 0.15);
+      osc.stop(now + i * 0.15 + 0.2);
+    });
+  }
+
+  // 播放失败音效（简单下降音调）
+  playLose() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    // 简单下降音调表示失败
+    [440.0, 392.0, 330.0].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+
+      osc.frequency.setValueAtTime(freq, now + i * 0.2);
+      gain.gain.setValueAtTime(0.25, now + i * 0.2);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.2 + 0.25);
+
+      osc.start(now + i * 0.2);
+      osc.stop(now + i * 0.2 + 0.25);
+    });
+  }
+
+  // 播放背景音乐
+  playBGM() {
+    if (this.bgmPlaying) return;
+
+    this.bgmAudio.play().catch((e) => {
+      console.warn("背景音乐播放失败:", e);
+    });
+    this.bgmPlaying = true;
+  }
+
+  // 停止背景音乐
+  stopBGM() {
+    this.bgmAudio.pause();
+    this.bgmAudio.currentTime = 0;
+    this.bgmPlaying = false;
+  }
+
+  // 设置音效音量
+  setSFXVolume(volume) {
+    this.sfxVolume = volume;
+    if (this.masterGain) {
+      this.masterGain.gain.value = volume;
+    }
+  }
+
+  // 静音/取消静音
+  toggleMute() {
+    this.isMuted = !this.isMuted;
+    if (this.masterGain) {
+      this.masterGain.gain.value = this.isMuted ? 0 : this.sfxVolume;
+    }
+    return this.isMuted;
+  }
+
+  // 检查是否静音
+  isCurrentlyMuted() {
+    return this.isMuted;
+  }
+}
+
+class MazeGame {
+  constructor() {
+    this.canvas = document.getElementById("gameCanvas");
+    this.ctx = this.canvas.getContext("2d");
+
+    // 音效管理器
+    this.soundManager = new SoundManager();
+
+    // 关卡系统
+    this.currentLevel = 1;
+    this.maxLevels = { 5: 10, 10: 10, 15: 10 }; // 每个难度 10 个关卡
+    this.totalBrooms = 0; // 累计扫把总数（跨关卡）
+    this.firstGameStarted = false; // 是否第一次开始游戏
+    this.isNextLevelCall = false; // 是否从下一关按钮调用
+    this.levelTime = 0; // 当前关卡剩余时间
+    this.timeResetOnLevelChange = true; // 是否每关重置时间
+
+    // 游戏配置
+    this.cellSize = 0;
+    this.cols = 10;
+    this.rows = 10;
+    this.maze = [];
+    this.player = { x: 0, y: 0 };
+    this.goal = { x: 0, y: 0 };
+    this.stars = [];
+    this.starsCollected = 0;
+    this.totalStars = 3;
+    this.obstacles = []; // 路障
+    this.broomItem = null; // 扫把道具
+    this.hasBroom = false; // 是否拥有扫把
+    this.broomCount = 0; // 扫把数量
+    this.steps = 0;
+    this.maxSteps = 50; // 最大步数
+    this.timer = 0;
+    this.timerInterval = null;
+    this.gameStarted = false;
+    this.gameWon = false;
+    this.gameLost = false; // 游戏失败状态
+
+    // 保存当前关卡的游戏状态（用于重玩）
+    this.savedMaze = [];
+    this.savedStars = [];
+    this.savedObstacles = [];
+    this.savedBroomItem = null;
+
+    // 绑定事件
+    this.bindEvents();
+
+    // 初始显示 ready go 界面
+    this.drawReadyScreen();
+  }
+
+  bindEvents() {
+    // 键盘控制
+    document.addEventListener("keydown", (e) => this.handleKeyPress(e));
+
+    // 难度选择改变
+    document
+      .getElementById("difficulty")
+      .addEventListener("change", () => this.newGame());
+
+    // 新游戏按钮
+    document
+      .getElementById("newGameBtn")
+      .addEventListener("click", () => this.newGame());
+
+    // 静音按钮
+    document.getElementById("muteBtn").addEventListener("click", () => {
+      const isMuted = this.soundManager.toggleMute();
+      const btn = document.getElementById("muteBtn");
+      btn.textContent = isMuted ? "🔇 已静音" : "🔊 静音";
+      btn.classList.toggle("muted", isMuted);
+    });
+
+    // 下一关按钮
+    document.getElementById("nextLevelBtn").addEventListener("click", () => {
+      this.hideWinMessage();
+      this.nextLevel();
+    });
+
+    // 重玩本关按钮
+    document.getElementById("replayLevelBtn").addEventListener("click", () => {
+      this.hideWinMessage();
+      this.replayLevel();
+    });
+
+    // 再玩一次按钮
+    if (document.getElementById("playAgainBtn")) {
+      document.getElementById("playAgainBtn").addEventListener("click", () => {
+        this.hideWinMessage();
+        this.newGame();
+      });
+    }
+
+    // 重新开始按钮（失败时使用）
+    document.getElementById("restartBtn").addEventListener("click", () => {
+      this.currentLevel = 1;
+      this.gameLost = false;
+      this.newGame();
+    });
+  }
+
+  // 获取难度提示文本
+  getDifficultyTip() {
+    const cols = parseInt(document.getElementById("difficulty").value);
+    const level = this.currentLevel;
+
+    const tips = {
+      5: {
+        1: "🌟 第 1 关 - 初出茅庐！5×5 迷宫，14 步",
+        2: "🌟 第 2 关 - 稍有挑战！5×5 迷宫，14 步",
+        3: "🌟 第 3 关 - 稳步前进！5×5 迷宫，14 步",
+        4: "🌟 第 4 关 - 渐入佳境！5×5 迷宫，14 步",
+        5: "🌟 第 5 关 - 游刃有余！5×5 迷宫，14 步",
+        6: "🌟 第 6 关 - 轻松应对！5×5 迷宫，14 步",
+        7: "🌟 第 7 关 - 游刃有余！5×5 迷宫，14 步",
+        8: "🌟 第 8 关 - 轻松过关！5×5 迷宫，14 步",
+        9: "🌟 第 9 关 - 挑战自我！5×5 迷宫，14 步",
+        10: "🌟 第 10 关 - 完美通关！5×5 迷宫，14 步",
+      },
+      10: {
+        1: "⚡ 第 1 关 - 中等难度！10×10 迷宫，35 步",
+        2: "⚡ 第 2 关 - 路障出现！10×10 迷宫，35 步",
+        3: "⚡ 第 3 关 - 小心绕路！10×10 迷宫，35 步",
+        4: "⚡ 第 4 关 - 更加复杂！10×10 迷宫，35 步",
+        5: "⚡ 第 5 关 - 终极考验！10×10 迷宫，35 步",
+        6: "⚡ 第 6 关 - 挑战极限！10×10 迷宫，35 步",
+        7: "⚡ 第 7 关 - 突破自我！10×10 迷宫，35 步",
+        8: "⚡ 第 8 关 - 勇往直前！10×10 迷宫，35 步",
+        9: "⚡ 第 9 关 - 巅峰对决！10×10 迷宫，35 步",
+        10: "⚡ 第 10 关 - 完美通关！10×10 迷宫，35 步",
+      },
+      15: {
+        1: "🔥 第 1 关 - 高手入门！15×15 迷宫，70 步",
+        2: "🔥 第 2 关 - 路障增多！15×15 迷宫，70 步",
+        3: "🔥 第 3 关 - 路径复杂！15×15 迷宫，70 步",
+        4: "🔥 第 4 关 - 考验技巧！15×15 迷宫，70 步",
+        5: "🔥 第 5 关 - 传奇挑战！15×15 迷宫，70 步",
+        6: "🔥 第 6 关 - 挑战极限！15×15 迷宫，70 步",
+        7: "🔥 第 7 关 - 突破自我！15×15 迷宫，70 步",
+        8: "🔥 第 8 关 - 勇往直前！15×15 迷宫，70 步",
+        9: "🔥 第 9 关 - 巅峰对决！15×15 迷宫，70 步",
+        10: "🔥 第 10 关 - 完美通关！15×15 迷宫，70 步",
+      },
+    };
+
+    return tips[cols]?.[level] || "🎮 开始游戏吧！";
+  }
+
+  updateDifficultyTip() {
+    const tipElement = document.getElementById("difficultyTip");
+    if (tipElement) {
+      tipElement.textContent = this.getDifficultyTip();
+    }
+  }
+
+  newGame() {
+    // 点击新游戏按钮时，重置关卡为 1，并且重置为已通关状态
+    if (!this.isNextLevelCall) {
+      this.currentLevel = 1;
+      this.firstGameStarted = true; // 标记为已通关状态
+      document.getElementById("reStartGame").textContent = "重新开始"; // 更新按钮文本
+    }
+    this.isNextLevelCall = false;
+
+    // 隐藏所有弹窗
+    this.hideWinMessage();
+    this.hideLoseMessage();
+
+    // 停止之前的计时器
+    this.stopTimer();
+
+    // 初始化音效（需要用户交互触发）
+    this.soundManager.init();
+
+    // 获取难度
+    this.cols = parseInt(document.getElementById("difficulty").value);
+    this.rows = this.cols;
+
+    // 根据难度设置最大步数
+    if (this.cols === 5) {
+      this.maxSteps = 14; // 简单：20*0.7=14 步
+    } else if (this.cols === 10) {
+      this.maxSteps = 35; // 中等：50*0.7=35 步
+    } else {
+      this.maxSteps = 70; // 困难：100*0.7=70 步
+    }
+    // 每关倒计时时间（根据不同难度）
+    if (this.cols === 5) {
+      this.levelTime = 15; // 简单：15 秒
+    } else if (this.cols === 10) {
+      this.levelTime = 30; // 中等：30 秒
+    } else {
+      this.levelTime = 60; // 困难：60 秒（1 分钟）
+    }
+    this.timer = this.levelTime; // 倒计时初始值
+
+    // 更新关卡提示
+    this.updateDifficultyTip();
+
+    // 计算单元格大小
+    const maxSize = Math.min(window.innerWidth - 100, 600);
+    this.cellSize = Math.floor(maxSize / this.cols);
+    this.canvas.width = this.cellSize * this.cols;
+    this.canvas.height = this.cellSize * this.rows;
+
+    // 重置游戏状态
+    this.generateMaze();
+    this.player = { x: 0, y: 0 };
+    this.goal = { x: this.cols - 1, y: this.rows - 1 };
+    this.stars = [];
+    this.starsCollected = 0;
+    this.obstacles = [];
+    this.steps = 0;
+    this.gameWon = false;
+    this.gameLost = false;
+    this.gameStarted = true;
+
+    // 生成星星位置
+    this.generateStars();
+
+    // 生成扫把道具
+    this.generateBroom();
+
+    // 根据难度添加路障（确保不与星星、扫把重叠）
+    this.addObstacles();
+
+    // 保存当前关卡的游戏状态（用于重玩本关）
+    this.saveGameState();
+
+    // 更新 UI
+    this.updateUI();
+
+    // 启动计时器
+    this.startTimer();
+
+    // 绘制游戏
+    this.draw();
+  }
+
+  // 保存游戏状态
+  saveGameState() {
+    // 深拷贝迷宫
+    this.savedMaze = this.maze.map((row) => [...row]);
+    // 深拷贝星星
+    this.savedStars = this.stars.map((s) => ({ ...s }));
+    // 深拷贝障碍物
+    this.savedObstacles = this.obstacles.map((o) => ({ ...o }));
+    // 保存扫把
+    this.savedBroomItem = this.broomItem ? { ...this.broomItem } : null;
+  }
+
+  // 加载保存的游戏状态
+  loadGameState() {
+    // 恢复迷宫
+    this.maze = this.savedMaze.map((row) => [...row]);
+    // 恢复星星
+    this.stars = this.savedStars.map((s) => ({ ...s }));
+    // 恢复障碍物
+    this.obstacles = this.savedObstacles.map((o) => ({ ...o }));
+    // 恢复扫把
+    this.broomItem = this.savedBroomItem ? { ...this.savedBroomItem } : null;
+  }
+
+  // 绘制 Ready Go 界面
+  drawReadyScreen() {
+    // 设置默认单元格大小用于图片绘制
+    const readyCellSize = Math.floor(
+      Math.min(this.canvas.width, this.canvas.height) / 10,
+    );
+
+    // 清空画布
+    this.ctx.fillStyle = "#667eea";
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+    // 设置文字样式
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "middle";
+
+    // 绘制狐狸表情
+    this.ctx.font = `bold ${readyCellSize * 3}px Arial`;
+    this.ctx.fillText("🦊", this.canvas.width / 2, this.canvas.height / 2 - 80);
+
+    // 绘制标题文字
+    this.ctx.font = `bold ${readyCellSize * 1.2}px Arial`;
+    this.ctx.fillStyle = "#fff";
+    this.ctx.fillText(
+      "Ready Go!",
+      this.canvas.width / 2,
+      this.canvas.height / 2 - 30,
+    );
+
+    // 绘制提示文字
+    this.ctx.font = `${readyCellSize * 0.6}px Arial`;
+    this.ctx.fillText(
+      '点击"新游戏"开始',
+      this.canvas.width / 2,
+      this.canvas.height / 2 + 30,
+    );
+
+    // 绘制星星装饰
+    this.ctx.font = `${readyCellSize * 0.8}px Arial`;
+    this.ctx.fillText(
+      "⭐",
+      this.canvas.width / 2 - 100,
+      this.canvas.height / 2 + 80,
+    );
+    this.ctx.fillText(
+      "⭐",
+      this.canvas.width / 2 + 100,
+      this.canvas.height / 2 + 80,
+    );
+  }
+
+  // 下一关
+  nextLevel() {
+    this.isNextLevelCall = true; // 标记是从下一关按钮调用的
+    if (this.currentLevel < this.maxLevels[this.cols]) {
+      this.currentLevel++;
+      this.newGame();
+    } else {
+      // 已是最后一关，重新开始游戏（从第 1 关开始）
+      this.currentLevel = 1;
+      this.firstGameStarted = true; // 重置为已通关状态
+      this.newGame();
+    }
+    this.updateDifficultyTip(); // 更新提示信息
+  }
+
+  // 重玩当前关卡
+  replayLevel() {
+    if (this.savedMaze && this.savedMaze.length > 0) {
+      // 隐藏所有弹窗
+      this.hideWinMessage();
+      this.hideLoseMessage();
+
+      // 停止之前的计时器
+      this.stopTimer();
+
+      // 初始化音效（需要用户交互触发）
+      this.soundManager.init();
+
+      // 获取难度
+      this.cols = parseInt(document.getElementById("difficulty").value);
+      this.rows = this.cols;
+
+      // 根据难度设置最大步数
+      if (this.cols === 5) {
+        this.maxSteps = 14;
+      } else if (this.cols === 10) {
+        this.maxSteps = 35;
+      } else {
+        this.maxSteps = 70;
+      }
+
+      // 更新关卡提示
+      this.updateDifficultyTip();
+
+      // 计算单元格大小
+      const maxSize = Math.min(window.innerWidth - 100, 600);
+      this.cellSize = Math.floor(maxSize / this.cols);
+      this.canvas.width = this.cellSize * this.cols;
+      this.canvas.height = this.cellSize * this.rows;
+
+      // 加载保存的游戏状态
+      this.loadGameState();
+      this.player = { x: 0, y: 0 };
+      this.goal = { x: this.cols - 1, y: this.rows - 1 };
+      this.starsCollected = 0;
+      this.broomItem = null;
+      this.hasBroom = this.totalBrooms > 0;
+      this.broomCount = this.totalBrooms; // 使用累计的扫把数量
+      this.steps = 0;
+      this.gameWon = false;
+      this.gameLost = false;
+      this.gameStarted = true;
+
+      // 更新 UI 和绘制
+      this.updateUI();
+
+      // 启动计时器
+      this.startTimer();
+
+      // 绘制游戏
+      this.draw();
+    } else {
+      // 如果没有保存状态，则重新开始
+      this.newGame();
+    }
+  }
+
+  // 使用递归回溯算法生成迷宫，并添加多条路径
+  generateMaze() {
+    // 初始化迷宫，全部为墙 (1)
+    this.maze = [];
+    for (let y = 0; y < this.rows; y++) {
+      this.maze[y] = [];
+      for (let x = 0; x < this.cols; x++) {
+        this.maze[y][x] = 1;
+      }
+    }
+
+    // 标记起点为通路
+    this.maze[0][0] = 0;
+
+    // 使用栈进行迭代式 DFS
+    const stack = [];
+    const visited = [];
+    for (let y = 0; y < this.rows; y++) {
+      visited[y] = [];
+      for (let x = 0; x < this.cols; x++) {
+        visited[y][x] = false;
+      }
+    }
+
+    // 从 (1,1) 开始生成
+    visited[1][1] = true;
+    this.maze[1][1] = 0;
+    stack.push({ x: 1, y: 1 });
+
+    const directions = [
+      { dx: 0, dy: -2 }, // 上
+      { dx: 2, dy: 0 }, // 右
+      { dx: 0, dy: 2 }, // 下
+      { dx: -2, dy: 0 }, // 左
+    ];
+
+    while (stack.length > 0) {
+      const current = stack[stack.length - 1];
+
+      // 查找未访问的邻居
+      const neighbors = [];
+      for (const dir of directions) {
+        const nx = current.x + dir.dx;
+        const ny = current.y + dir.dy;
+
+        if (nx > 0 && nx < this.cols - 1 && ny > 0 && ny < this.rows - 1) {
+          if (!visited[ny][nx]) {
+            neighbors.push({ x: nx, y: ny, dx: dir.dx, dy: dir.dy });
+          }
+        }
+      }
+
+      if (neighbors.length > 0) {
+        // 打乱顺序随机选择
+        this.shuffleArray(neighbors);
+        const chosen = neighbors[0];
+
+        // 打通中间的墙
+        this.maze[current.y + chosen.dy / 2][current.x + chosen.dx / 2] = 0;
+        // 标记新格子
+        this.maze[chosen.y][chosen.x] = 0;
+        visited[chosen.y][chosen.x] = true;
+        // 推入栈
+        stack.push({ x: chosen.x, y: chosen.y });
+      } else {
+        // 回溯
+        stack.pop();
+      }
+    }
+
+    // 打通起点到迷宫的路径
+    this.maze[0][1] = 0;
+    this.maze[1][0] = 0;
+
+    // 确保终点为通路
+    this.maze[this.rows - 1][this.cols - 1] = 0;
+
+    // 打通终点附近 3x3 范围内的一条路径通道
+    const endX = this.cols - 1;
+    const endY = this.rows - 1;
+
+    // 在终点左侧一列，从终点向上 3 格范围内打通
+    if (endX >= 2 && endY >= 2) {
+      // 打通 (endY-2, endX-1), (endY-1, endX-1), (endY, endX-1) 形成垂直通道
+      this.maze[endY - 2][endX - 1] = 0;
+      this.maze[endY - 1][endX - 1] = 0;
+      this.maze[endY][endX - 1] = 0;
+    }
+
+    // 添加多条路径到终点（增加迷宫的趣味性和迷惑性）
+    this.addMultiplePathsToGoal();
+  }
+
+  // 添加多条路径到终点
+  addMultiplePathsToGoal() {
+    // 收集迷宫中间段的墙（中间 50% 的区域）
+    const potentialPathCells = [];
+    const midX = Math.floor(this.cols / 2);
+    const midY = Math.floor(this.rows / 2);
+    const rangeX = Math.floor(this.cols * 0.25); // 中间段宽度
+    const rangeY = Math.floor(this.rows * 0.25); // 中间段高度
+
+    for (let y = midY - rangeY; y < midY + rangeY; y++) {
+      for (let x = midX - rangeX; x < midX + rangeX; x++) {
+        if (x > 0 && x < this.cols - 1 && y > 0 && y < this.rows - 1) {
+          if (this.maze[y][x] === 1) {
+            // 检查这个位置是否靠近现有路径（至少有一个通路邻居）
+            const directions = [
+              { dx: 0, dy: -1 },
+              { dx: 1, dy: 0 },
+              { dx: 0, dy: 1 },
+              { dx: -1, dy: 0 },
+            ];
+            let hasPathNeighbor = false;
+            for (const dir of directions) {
+              const nx = x + dir.dx;
+              const ny = y + dir.dy;
+              if (nx >= 0 && nx < this.cols && ny >= 0 && ny < this.rows) {
+                if (this.maze[ny][nx] === 0) {
+                  hasPathNeighbor = true;
+                  break;
+                }
+              }
+            }
+            if (hasPathNeighbor) {
+              potentialPathCells.push({ x, y });
+            }
+          }
+        }
+      }
+    }
+
+    // 打乱顺序，随机选择一些墙打通形成分支
+    this.shuffleArray(potentialPathCells);
+
+    // 打通中间段 50% 的墙形成额外路径
+    const branchesToOpen = Math.floor(potentialPathCells.length * 0.5);
+    for (let i = 0; i < branchesToOpen && i < potentialPathCells.length; i++) {
+      const cell = potentialPathCells[i];
+      this.maze[cell.y][cell.x] = 0;
+    }
+  }
+
+  // 打乱数组
+  shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+  }
+
+  generateStars() {
+    this.stars = [];
+    let starCount = 0;
+
+    while (starCount < this.totalStars) {
+      const x = Math.floor(Math.random() * this.cols);
+      const y = Math.floor(Math.random() * this.rows);
+
+      // 确保星星不在起点、终点或已有的星星位置
+      if (
+        (x !== 0 || y !== 0) &&
+        (x !== this.cols - 1 || y !== this.rows - 1)
+      ) {
+        let duplicate = false;
+        for (const star of this.stars) {
+          if (star.x === x && star.y === y) {
+            duplicate = true;
+            break;
+          }
+        }
+
+        // 检查是否与障碍物重叠
+        const isObstacle = this.obstacles.some((o) => o.x === x && o.y === y);
+
+        if (!duplicate && !isObstacle && this.maze[y][x] === 0) {
+          this.stars.push({ x, y });
+          starCount++;
+        }
+      }
+    }
+  }
+
+  // 生成扫把道具
+  generateBroom() {
+    this.broomItem = null;
+
+    // 第一关开始时，默认给一把扫把
+    if (this.currentLevel === 1 && !this.isNextLevelCall) {
+      this.firstGameStarted = true;
+      this.totalBrooms = 1;
+      this.broomCount = 1;
+      this.hasBroom = true;
+      // 点击开始游戏后，文本显示为"重新开始"
+      document.getElementById("restartBtn").textContent = "重新开始";
+      return;
+    }
+
+    // 扫把生成概率：简单模式 20%，其他模式 30%
+    const broomProbability = this.cols === 5 ? 0.2 : 0.3;
+    if (Math.random() <= broomProbability) {
+      let broomCount = 0;
+      while (broomCount < 1) {
+        const x = Math.floor(Math.random() * this.cols);
+        const y = Math.floor(Math.random() * this.rows);
+
+        // 确保扫把不在起点、终点
+        if (
+          (x !== 0 || y !== 0) &&
+          (x !== this.cols - 1 || y !== this.rows - 1)
+        ) {
+          // 检查是否与星星重叠
+          const isStar = this.stars.some((s) => s.x === x && s.y === y);
+          // 检查是否与障碍物重叠
+          const isObstacle = this.obstacles.some((o) => o.x === x && o.y === y);
+          // 检查是否是通路
+          const isPath = this.maze[y][x] === 0;
+
+          if (!isStar && !isObstacle && isPath) {
+            this.broomItem = { x, y };
+            broomCount++;
+          }
+        }
+      }
+    }
+  }
+
+  // 生成障碍物（确保不与星星和扫把重叠）
+  addObstacles() {
+    this.obstacles = [];
+    let numObstacles = 0;
+
+    // 根据难度设置路障数量
+    if (this.cols === 5) {
+      numObstacles = 1; // 简单模式：1 个路障
+    } else if (this.cols === 10) {
+      numObstacles = 2; // 中等模式：2 个路障
+    } else if (this.cols === 15) {
+      numObstacles = 4; // 高级模式：4 个路障
+    }
+
+    if (numObstacles === 0) return;
+
+    const directions = [
+      { dx: 0, dy: -1 },
+      { dx: 1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: -1, dy: 0 },
+    ];
+
+    // 收集路径中间的 45% 区域内的通路格子
+    const midX = Math.floor(this.cols / 2);
+    const midY = Math.floor(this.rows / 2);
+    const rangeX = Math.floor(this.cols * 0.225); // 中间段宽度 45%
+    const rangeY = Math.floor(this.rows * 0.225); // 中间段高度 45%
+
+    const pathCellsInMiddle = [];
+    for (let y = midY - rangeY; y < midY + rangeY; y++) {
+      for (let x = midX - rangeX; x < midX + rangeX; x++) {
+        if (x > 0 && x < this.cols - 1 && y > 0 && y < this.rows - 1) {
+          // 确保在通路上
+          if (this.maze[y][x] === 0) {
+            pathCellsInMiddle.push({ x, y });
+          }
+        }
+      }
+    }
+
+    // 打乱顺序
+    this.shuffleArray(pathCellsInMiddle);
+
+    // 随机选择位置添加路障
+    for (let i = 0; i < numObstacles && i < pathCellsInMiddle.length; i++) {
+      const cell = pathCellsInMiddle[i];
+      const x = cell.x;
+      const y = cell.y;
+
+      // 确保不在起点、终点、已有路障、星星或扫把位置
+      const isStart = x === 0 && y === 0;
+      const isGoal = x === this.cols - 1 && y === this.rows - 1;
+
+      const isStar = this.stars.some((s) => s.x === x && s.y === y);
+      const isBroom =
+        this.broomItem && this.broomItem.x === x && this.broomItem.y === y;
+      const isObstacle = this.obstacles.some((o) => o.x === x && o.y === y);
+
+      // 确保至少有 2 个通路邻居（这样玩家需要绕路）
+      let pathNeighbors = 0;
+      for (const dir of directions) {
+        const nx = x + dir.dx;
+        const ny = y + dir.dy;
+        if (nx >= 0 && nx < this.cols && ny >= 0 && ny < this.rows) {
+          if (this.maze[ny][nx] === 0) {
+            pathNeighbors++;
+          }
+        }
+      }
+
+      if (
+        !isStart &&
+        !isGoal &&
+        !isStar &&
+        !isBroom &&
+        !isObstacle &&
+        pathNeighbors >= 2
+      ) {
+        this.obstacles.push({ x, y });
+      }
+    }
+  }
+
+  handleKeyPress(e) {
+    if (!this.gameStarted || this.gameWon) return;
+
+    let dx = 0;
+    let dy = 0;
+    let handled = false;
+
+    switch (e.key) {
+      case "ArrowUp":
+      case "w":
+      case "W":
+        dy = -1;
+        handled = true;
+        break;
+      case "ArrowDown":
+      case "s":
+      case "S":
+        dy = 1;
+        handled = true;
+        break;
+      case "ArrowLeft":
+      case "a":
+      case "A":
+        dx = -1;
+        handled = true;
+        break;
+      case "ArrowRight":
+      case "d":
+      case "D":
+        dx = 1;
+        handled = true;
+        break;
+    }
+
+    if (handled) {
+      e.preventDefault();
+      this.movePlayer(dx, dy);
+    }
+  }
+
+  movePlayer(dx, dy) {
+    if (this.gameLost) return;
+
+    const newX = this.player.x + dx;
+    const newY = this.player.y + dy;
+
+    // 检查边界
+    if (newX < 0 || newX >= this.cols || newY < 0 || newY >= this.rows) {
+      return;
+    }
+
+    // 检查是否是墙
+    if (this.maze[newY][newX] === 1) {
+      return;
+    }
+
+    // 检查是否是障碍物
+    if (this.obstacles.some((o) => o.x === newX && o.y === newY)) {
+      // 如果有扫把，清除障碍物
+      if (this.hasBroom && this.broomCount > 0) {
+        this.obstacles = this.obstacles.filter(
+          (o) => o.x !== newX || o.y !== newY,
+        );
+        this.broomCount--;
+        this.hasBroom = this.broomCount > 0;
+        this.soundManager.playStar(); // 使用收集音效
+        this.updateUI();
+      } else {
+        this.soundManager.playObstacle();
+      }
+      return;
+    }
+
+    // 移动玩家
+    this.player.x = newX;
+    this.player.y = newY;
+    this.steps++;
+
+    // 播放移动音效
+    this.soundManager.playMove();
+
+    // 检查是否收集扫把
+    this.checkBroomCollection();
+
+    // 检查步数是否耗尽（失败显示弹窗，等待用户点击重新开始）
+    if (this.steps >= this.maxSteps) {
+      this.gameLost = true;
+      this.stopTimer();
+      // 显示失败弹窗
+      this.showLoseMessage();
+      this.updateUI();
+      this.draw();
+      return;
+    }
+
+    // 检查是否收集星星
+    this.checkStarCollection();
+
+    // 检查是否到达终点
+    this.checkGoal();
+
+    // 更新 UI 和绘制
+    this.updateUI();
+    this.draw();
+  }
+
+  checkStarCollection() {
+    for (let i = 0; i < this.stars.length; i++) {
+      if (
+        this.stars[i].x === this.player.x &&
+        this.stars[i].y === this.player.y
+      ) {
+        this.stars.splice(i, 1);
+        this.starsCollected++;
+        this.soundManager.playStar();
+        break;
+      }
+    }
+  }
+
+  // 检查扫把收集
+  checkBroomCollection() {
+    if (
+      this.broomItem &&
+      this.broomItem.x === this.player.x &&
+      this.broomItem.y === this.player.y
+    ) {
+      this.broomItem = null;
+      this.totalBrooms++;
+      this.broomCount = this.totalBrooms;
+      this.hasBroom = true;
+      this.soundManager.playStar();
+    }
+  }
+
+  checkGoal() {
+    if (this.player.x === this.goal.x && this.player.y === this.goal.y) {
+      // 检查是否收集了至少 2 颗星星
+      if (this.starsCollected >= 2) {
+        this.gameWon = true;
+        this.stopTimer();
+        this.showWinMessage();
+      } else {
+        // 星星不够，显示提示
+        this.showStarNotEnoughMessage();
+      }
+    }
+  }
+
+  startTimer() {
+    this.stopTimer();
+    this.timerInterval = setInterval(() => {
+      this.timer--;
+      this.updateUI();
+      // 时间用尽检查（失败显示弹窗，等待用户点击重新开始）
+      if (this.timer <= 0) {
+        this.gameLost = true;
+        this.stopTimer();
+        this.showLoseMessage();
+        this.updateUI();
+        this.draw();
+        return;
+      }
+    }, 1000);
+  }
+
+  stopTimer() {
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+    }
+  }
+
+  updateUI() {
+    document.getElementById("stars").textContent =
+      `${this.starsCollected}/${this.totalStars}`;
+    document.getElementById("brooms").textContent = this.broomCount;
+    document.getElementById("timer").textContent = this.formatTime(this.timer);
+    const remainingSteps = Math.max(0, this.maxSteps - this.steps);
+    document.getElementById("remainingSteps").textContent = remainingSteps;
+  }
+
+  formatTime(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  }
+
+  showWinMessage() {
+    // 先隐藏失败弹窗
+    this.hideLoseMessage();
+
+    const message = document.getElementById("winMessage");
+    const stats = message.querySelector(".win-stats");
+    const buttons = message.querySelector(".win-buttons");
+
+    // 检查是否是最后一个关卡
+    const isLastLevel = this.currentLevel === this.maxLevels[this.cols];
+
+    if (isLastLevel) {
+      message.className = "win-message hidden last-level-message";
+      // 重置弹窗样式
+      message.className = "win-message hidden mode-complete-message";
+
+      // 最后一关关卡通关 - 弹窗样式
+      stats.innerHTML = `
+      🎊 恭喜完成所有关卡！ 🎊<br><br>
+      太棒了！你已经完成了这个难度的所有关卡！
+    `;
+
+      const nextLevelBtn = document.getElementById("nextLevelBtn");
+      nextLevelBtn.textContent = "重新游戏";
+      nextLevelBtn.className = "btn btn-primary btn-win"; // 设置按钮样式
+      document.getElementById("replayLevelBtn").classList.add("hidden"); // 隐藏重玩按钮
+    } else {
+      let starsText = "";
+      if (this.starsCollected === this.totalStars) {
+        starsText = "⭐ 完美！收集了所有星星 ⭐<br>";
+      } else {
+        starsText = `收集了 ${this.starsCollected}/${this.totalStars} 颗星星<br>`;
+      }
+
+      // 普通关卡通关 - 原有弹窗样式
+      stats.innerHTML = `
+          步数：${this.steps}<br>
+          ${starsText}
+          用时：${this.formatTime(this.levelTime - this.timer)}
+      `;
+    }
+
+    // 显示按钮区域
+    buttons.style.display = "flex";
+
+    // 播放胜利音效
+    this.soundManager.playWin();
+
+    // 移除 hidden 类显示弹窗
+    message.classList.remove("hidden");
+  }
+
+  hideWinMessage() {
+    document.getElementById("winMessage").classList.add("hidden");
+  }
+
+  // 显示全部关卡通关消息
+  showModeCompleteMessage() {
+    const message = document.getElementById("winMessage");
+    const stats = message.querySelector(".win-stats");
+    const buttons = message.querySelector(".win-buttons");
+
+    // 重置弹窗样式
+    message.className = "win-message hidden mode-complete-message";
+    buttons.style.display = "none";
+
+    stats.innerHTML = `
+      🎊 恭喜完成所有关卡！ 🎊<br><br>
+      太棒了！你已经完成了这个难度的所有关卡！
+    `;
+
+    // 播放胜利音效
+    this.soundManager.playWin();
+
+    // 显示弹窗
+    message.classList.remove("hidden");
+  }
+
+  // 显示星星不够的提示
+  showStarNotEnoughMessage() {
+    // 创建临时提示元素
+    let tip = document.getElementById("starNotEnoughTip");
+    if (!tip) {
+      tip = document.createElement("div");
+      tip.id = "starNotEnoughTip";
+      tip.style.cssText =
+        "position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(255, 100, 100, 0.95); color: white; padding: 30px 50px; border-radius: 20px; font-size: 1.5rem; text-align: center; z-index: 2000; box-shadow: 0 10px 40px rgba(0,0,0,0.5); animation: popIn 0.3s ease;";
+      document.body.appendChild(tip);
+    }
+    tip.innerHTML = `😢 星星不够！<br>至少需要收集 2 颗星星才能通关`;
+    tip.classList.remove("hidden");
+
+    // 3 秒后自动隐藏
+    setTimeout(() => {
+      tip.classList.add("hidden");
+    }, 3000);
+  }
+
+  showLoseMessage() {
+    // 清零扫把累计数（闯关失败时）
+    this.totalBrooms = 0;
+    this.hasBroom = false;
+    this.broomCount = 0;
+
+    const message = document.getElementById("loseMessage");
+    const stats = message.querySelector(".lose-stats");
+
+    stats.innerHTML = `
+            剩余步数：0<br>
+            收集星星：${this.starsCollected}/${this.totalStars}<br>
+            通关时间：${this.formatTime(this.levelTime - this.timer)}
+        `;
+
+    // 播放失败音效
+    this.soundManager.playLose();
+
+    // 移除 hidden 类显示弹窗
+    message.classList.remove("hidden");
+  }
+
+  hideLoseMessage() {
+    const message = document.getElementById("loseMessage");
+    if (message) {
+      message.classList.add("hidden");
+    }
+  }
+
+  draw() {
+    // 清空画布
+    this.ctx.fillStyle = "#fff";
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+    // 绘制迷宫
+    for (let y = 0; y < this.rows; y++) {
+      for (let x = 0; x < this.cols; x++) {
+        const cellX = x * this.cellSize;
+        const cellY = y * this.cellSize;
+
+        if (this.maze[y][x] === 1) {
+          // 墙壁
+          this.ctx.fillStyle = "#4CAF50";
+          this.ctx.fillRect(cellX, cellY, this.cellSize, this.cellSize);
+
+          // 墙壁高光
+          this.ctx.fillStyle = "#66BB6A";
+          this.ctx.fillRect(cellX, cellY, this.cellSize, 4);
+        } else {
+          // 地板
+          this.ctx.fillStyle = "#E8F5E9";
+          this.ctx.fillRect(cellX, cellY, this.cellSize, this.cellSize);
+
+          // 地板网格线
+          this.ctx.strokeStyle = "#C8E6C9";
+          this.ctx.lineWidth = 1;
+          this.ctx.strokeRect(cellX, cellY, this.cellSize, this.cellSize);
+        }
+      }
+    }
+
+    // 绘制星星
+    for (const star of this.stars) {
+      this.drawStar(star.x, star.y);
+    }
+
+    // 绘制路障
+    for (const obstacle of this.obstacles) {
+      this.drawObstacle(obstacle.x, obstacle.y);
+    }
+
+    // 绘制扫把道具
+    if (this.broomItem) {
+      this.drawBroom(this.broomItem.x, this.broomItem.y);
+    }
+
+    // 绘制终点
+    this.drawGoal(this.goal.x, this.goal.y);
+
+    // 绘制玩家
+    this.drawPlayer(this.player.x, this.player.y);
+  }
+
+  drawStar(cellX, cellY) {
+    const centerX = cellX * this.cellSize + this.cellSize / 2;
+    const centerY = cellY * this.cellSize + this.cellSize / 2;
+
+    this.ctx.save();
+    this.ctx.font = `${this.cellSize * 0.8}px Arial`;
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillText("⭐", centerX, centerY);
+    this.ctx.restore();
+  }
+
+  drawGoal(cellX, cellY) {
+    const centerX = cellX * this.cellSize + this.cellSize / 2;
+    const centerY = cellY * this.cellSize + this.cellSize / 2;
+
+    this.ctx.save();
+    this.ctx.font = `${this.cellSize * 0.8}px Arial`;
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillText("🏆", centerX, centerY);
+    this.ctx.restore();
+  }
+
+  drawPlayer(cellX, cellY) {
+    const centerX = cellX * this.cellSize + this.cellSize / 2;
+    const centerY = cellY * this.cellSize + this.cellSize / 2;
+
+    this.ctx.save();
+    this.ctx.font = `${this.cellSize * 0.8}px Arial`;
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "middle";
+
+    // 绘制小狐狸
+    this.ctx.fillText("🦊", centerX, centerY);
+
+    // 如果有扫把，在下方显示扫把图标
+    if (this.hasBroom) {
+      this.ctx.font = `${this.cellSize * 0.5}px Arial`;
+      this.ctx.fillText("🧹", centerX, centerY + this.cellSize * 0.3);
+    }
+
+    this.ctx.restore();
+  }
+
+  drawObstacle(cellX, cellY) {
+    const centerX = cellX * this.cellSize + this.cellSize / 2;
+    const centerY = cellY * this.cellSize + this.cellSize / 2;
+
+    this.ctx.save();
+    this.ctx.font = `${this.cellSize * 0.8}px Arial`;
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillText("🪨", centerX, centerY);
+    this.ctx.restore();
+  }
+
+  drawBroom(cellX, cellY) {
+    const centerX = cellX * this.cellSize + this.cellSize / 2;
+    const centerY = cellY * this.cellSize + this.cellSize / 2;
+
+    this.ctx.save();
+    this.ctx.font = `${this.cellSize * 0.8}px Arial`;
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillText("🧹", centerX, centerY);
+    this.ctx.restore();
+  }
+}
+
+// 启动游戏
+window.onload = () => {
+  new MazeGame();
+};

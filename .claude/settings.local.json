@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(start index.html)",
+      "Bash(node --check game.js)",
+      "Bash(sed -i 's/恢复锤子/恢复扫把/g' game.js)",
+      "Bash(sed -i 's/默认给一根锤子/默认给一根扫把/g' game.js)",
+      "Bash(sed -i 's/使用累计的锤子数量/使用累计的扫把数量/g' game.js)",
+      "Bash(sed -i 's/确保锤子不在起点/确保扫把不在起点/g' game.js)",
+      "Bash(sed -i 's/确保不与星星和锤子重叠/确保不与星星和扫把重叠/g' game.js)"
+    ]
+  }
+}

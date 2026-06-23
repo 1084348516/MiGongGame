@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>🦊 迷宫探险大冒险</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="game-container">
+      <h1>🦊 迷宫探险大冒险 ⭐</h1>
+
+      <div class="controls">
+        <div class="difficulty-select">
+          <label for="difficulty">难度:</label>
+          <select id="difficulty">
+            <option value="5">简单 (5×5)</option>
+            <option value="10" selected>中等 (10×10)</option>
+            <option value="15">困难 (15×15)</option>
+          </select>
+        </div>
+        <button id="newGameBtn" class="btn btn-primary">
+          🎮 <span id="reStartGame">开始游戏</span>
+        </button>
+        <button id="muteBtn" class="btn btn-muted">🔊 静音</button>
+      </div>
+      <div class="difficulty-tip" id="difficultyTip"></div>
+
+      <div class="game-info">
+        <div class="stat">
+          <span class="stat-icon">💫</span>
+          <span class="stat-label">剩余步数:</span>
+          <span id="remainingSteps" class="stat-value">15</span>
+        </div>
+        <div class="stat">
+          <span class="stat-icon">⭐</span>
+          <span class="stat-label">星星:</span>
+          <span id="stars" class="stat-value">0/3</span>
+        </div>
+        <div class="stat">
+          <span class="stat-icon">⏰</span>
+          <span class="stat-label">剩余时间:</span>
+          <span id="timer" class="stat-value">00:15</span>
+        </div>
+        <div class="stat">
+          <span class="stat-icon">🧹</span>
+          <span class="stat-label">扫把:</span>
+          <span id="brooms" class="stat-value">0</span>
+        </div>
+      </div>
+
+      <div class="game-wrapper">
+        <canvas id="gameCanvas"></canvas>
+      </div>
+
+      <div class="instructions">
+        <h3>📖 游戏说明</h3>
+        <ul>
+          <li>用 <kbd>方向键</kbd> 或 <kbd>WASD</kbd> 控制小狐狸移动</li>
+          <li>收集至少 2 颗星星 ⭐（共 3 颗）</li>
+          <li>到达终点 🏆 获胜!</li>
+          <li>避开路障 🪨（持有扫把可清除路障）</li>
+          <li>失败时自动重新开始</li>
+        </ul>
+      </div>
+
+      <div id="winMessage" class="win-message hidden">
+        <div class="win-content">
+          <h2>🎉 恭喜获胜！🎉</h2>
+          <p class="win-stats"></p>
+          <div class="win-buttons">
+            <button id="nextLevelBtn" class="btn btn-primary">下一关</button>
+            <button id="replayLevelBtn" class="btn btn-primary">
+              重玩本关
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="loseMessage" class="win-message hidden">
+        <div class="win-content lose-content">
+          <h2>😢 闯关失败！</h2>
+          <p class="lose-stats"></p>
+          <button id="restartBtn" class="btn btn-primary">重新开始</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="game.js"></script>
+  </body>
+</html>
