@@ -1,5 +1,53 @@
 // 迷宫探险游戏
 
+// 排行榜管理器类
+class LeaderboardManager {
+  constructor() {
+    this.maxEntries = 10; // 每个难度存储前 10 名
+  }
+
+  // 获取指定难度的排行榜
+  getLeaderboard(difficulty) {
+    const data = localStorage.getItem(`leaderboard_${difficulty}`);
+    return data ? JSON.parse(data) : [];
+  }
+
+  // 保存排行榜
+  saveLeaderboard(difficulty, entries) {
+    localStorage.setItem(`leaderboard_${difficulty}`, JSON.stringify(entries));
+  }
+
+  // 添加新记录
+  addEntry(difficulty, entry) {
+    const leaderboard = this.getLeaderboard(difficulty);
+    leaderboard.push(entry);
+    // 排序：星星多优先，时间少优先
+    leaderboard.sort((a, b) => {
+      if (b.stars !== a.stars) return b.stars - a.stars;
+      return a.totalTime - b.totalTime;
+    });
+    // 保留前 10 名
+    leaderboard.splice(this.maxEntries);
+    this.saveLeaderboard(difficulty, leaderboard);
+  }
+
+  // 获取排名
+  getRank(difficulty, entry) {
+    const leaderboard = this.getLeaderboard(difficulty);
+    // 计算比当前条目更好的数量
+    let rank = 1;
+    for (const other of leaderboard) {
+      if (
+        other.stars > entry.stars ||
+        (other.stars === entry.stars && other.totalTime < entry.totalTime)
+      ) {
+        rank++;
+      }
+    }
+    return Math.min(rank, this.maxEntries + 1);
+  }
+}
+
 class SoundManager {
   constructor() {
     this.audioContext = null;
@@ -186,6 +234,9 @@ class MazeGame {
     // 音效管理器
     this.soundManager = new SoundManager();
 
+    // 排行榜管理器
+    this.leaderboardManager = new LeaderboardManager();
+
     // 关卡系统
     this.currentLevel = 1;
     this.maxLevels = { 5: 10, 10: 10, 15: 10 }; // 每个难度 10 个关卡
@@ -223,11 +274,15 @@ class MazeGame {
     this.savedObstacles = [];
     this.savedBroomItem = null;
 
+    // 每关数据记录（用于排行榜计算）
+    this.collectedStarsPerLevel = [];
+    this.levelTimeSpent = [];
+
     // 绑定事件
     this.bindEvents();
 
-    // 初始显示 ready go 界面
-    this.drawReadyScreen();
+    // 初始化游戏界面（不启动计时器）
+    this.initGame();
   }
 
   bindEvents() {
@@ -237,7 +292,7 @@ class MazeGame {
     // 难度选择改变
     document
       .getElementById("difficulty")
-      .addEventListener("change", () => this.newGame());
+      .addEventListener("change", () => this.showConfirmRestartDialog());
 
     // 新游戏按钮
     document
@@ -251,6 +306,21 @@ class MazeGame {
       btn.textContent = isMuted ? "🔇 已静音" : "🔊 静音";
       btn.classList.toggle("muted", isMuted);
     });
+
+    // 排行榜按钮
+    document.getElementById("leaderboardBtn").addEventListener("click", () => {
+      toggleLeaderboardPanel();
+    });
+
+    // 添加测试数据按钮
+    document.getElementById("addTestDataBtn").addEventListener("click", () => {
+      addTestData();
+    });
+
+    // 开始游戏按钮（遮罩层）
+    document
+      .getElementById("startGameBtn")
+      .addEventListener("click", () => this.onStartGame());
 
     // 下一关按钮
     document.getElementById("nextLevelBtn").addEventListener("click", () => {
@@ -269,6 +339,8 @@ class MazeGame {
       document.getElementById("playAgainBtn").addEventListener("click", () => {
         this.hideWinMessage();
         this.newGame();
+        // 再玩一次要启动计时器
+        this.startTimer();
       });
     }
 
@@ -277,6 +349,8 @@ class MazeGame {
       this.currentLevel = 1;
       this.gameLost = false;
       this.newGame();
+      // 失败后重新开始要启动计时器
+      this.startTimer();
     });
   }
 
@@ -334,14 +408,169 @@ class MazeGame {
     }
   }
 
+  showConfirmRestartDialog() {
+    // 如果 mask 层已经显示，说明不需要再显示确认对话框，直接切换
+    const overlay = document.getElementById("gameOverlay");
+    if (overlay && !overlay.classList.contains("hidden")) {
+      this.performDifficultyChange();
+      return;
+    }
+
+    // 第一次开始游戏前（firstGameStarted 为 false）或已完成所有关卡（currentLevel 为 1 且 isNextLevelCall 为 true）切换难度，不显示确认对话框
+    if (
+      !this.firstGameStarted ||
+      (this.currentLevel === 1 && this.isNextLevelCall)
+    ) {
+      // 直接切换难度
+      this.performDifficultyChange();
+      return;
+    }
+
+    // 暂停倒计时
+    this.stopTimer();
+
+    // 创建确认对话框
+    let dialog = document.getElementById("confirmRestartDialog");
+    if (!dialog) {
+      dialog = document.createElement("div");
+      dialog.id = "confirmRestartDialog";
+      dialog.style.cssText =
+        "position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.7); display: flex; justify-content: center; align-items: center; z-index: 3000;";
+      dialog.innerHTML = `
+        <div style="background: white; padding: 40px 60px; border-radius: 20px; text-align: center; animation: popIn 0.3s ease;">
+          <h2 style="color: #667eea; margin-bottom: 20px; font-size: 1.8rem;">切换难度</h2>
+          <p style="color: #555; font-size: 1.1rem; margin-bottom: 30px;">
+            切换难度等级会重新开始游戏，确定要继续吗？
+          </p>
+          <div style="display: flex; gap: 15px; justify-content: center;">
+            <button id="confirmRestartBtn" class="btn btn-primary">确定</button>
+            <button id="cancelRestartBtn" class="btn btn-muted">取消</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(dialog);
+
+      // 添加动画样式
+      if (!document.getElementById("confirmDialogStyle")) {
+        const style = document.createElement("style");
+        style.id = "confirmDialogStyle";
+        style.textContent = `
+          @keyframes popIn {
+            0% { transform: scale(0); opacity: 0; }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); opacity: 1; }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+
+      // 绑定按钮事件
+      dialog
+        .querySelector("#confirmRestartBtn")
+        .addEventListener("click", () => {
+          this.performDifficultyChange();
+          dialog.remove();
+        });
+
+      dialog
+        .querySelector("#cancelRestartBtn")
+        .addEventListener("click", () => {
+          dialog.remove();
+          // 恢复原来的难度选择
+          const select = document.getElementById("difficulty");
+          select.value = this.cols;
+          // 恢复倒计时
+          if (!this.gameWon && !this.gameLost) {
+            this.startTimer();
+          }
+        });
+    }
+
+    dialog.classList.remove("hidden");
+    dialog.style.display = "flex";
+  }
+
+  performDifficultyChange() {
+    const newCols = parseInt(document.getElementById("difficulty").value);
+
+    if (newCols !== this.cols) {
+      // 记录当前难度
+      const currentCols = this.cols;
+      // 重置状态
+      this.firstGameStarted = false;
+      this.currentLevel = 1;
+      this.isNextLevelCall = false;
+      this.cols = newCols;
+      this.rows = newCols;
+      // 切换难度
+      this.resetLevelData();
+      this.hideWinMessage();
+      this.hideLoseMessage();
+      this.stopTimer();
+
+      // 根据难度设置最大步数
+      if (this.cols === 5) {
+        this.maxSteps = 14;
+      } else if (this.cols === 10) {
+        this.maxSteps = 35;
+      } else {
+        this.maxSteps = 70;
+      }
+
+      // 每关倒计时时间
+      if (this.cols === 5) {
+        this.levelTime = 15;
+      } else if (this.cols === 10) {
+        this.levelTime = 30;
+      } else {
+        this.levelTime = 60;
+      }
+      this.timer = this.levelTime;
+
+      this.updateDifficultyTip();
+
+      // 计算单元格大小
+      const maxSize = Math.min(window.innerWidth - 100, 600);
+      this.cellSize = Math.floor(maxSize / this.cols);
+      this.canvas.width = this.cellSize * this.cols;
+      this.canvas.height = this.cellSize * this.rows;
+
+      // 重置游戏状态
+      this.generateMaze();
+      this.player = { x: 0, y: 0 };
+      this.goal = { x: this.cols - 1, y: this.rows - 1 };
+      this.stars = [];
+      this.starsCollected = 0;
+      this.obstacles = [];
+      this.steps = 0;
+      this.gameWon = false;
+      this.gameLost = false;
+      this.gameStarted = true;
+
+      this.generateStars();
+      this.generateBroom();
+      this.addObstacles();
+      this.saveGameState();
+
+      this.updateUI();
+      this.draw();
+
+      // 显示遮罩层
+      const overlay = document.getElementById("gameOverlay");
+      if (overlay) overlay.classList.remove("hidden");
+    }
+  }
+
   newGame() {
-    // 点击新游戏按钮时，重置关卡为 1，并且重置为已通关状态
+    // 点击新游戏按钮或切换难度时，重置关卡为 1，并且重置为已通关状态
     if (!this.isNextLevelCall) {
       this.currentLevel = 1;
       this.firstGameStarted = true; // 标记为已通关状态
       document.getElementById("reStartGame").textContent = "重新开始"; // 更新按钮文本
     }
     this.isNextLevelCall = false;
+    // 切换难度或重新开始时必须重置每关数据记录
+    this.resetLevelData();
 
     // 隐藏所有弹窗
     this.hideWinMessage();
@@ -411,11 +640,26 @@ class MazeGame {
     // 更新 UI
     this.updateUI();
 
-    // 启动计时器
-    this.startTimer();
-
     // 绘制游戏
     this.draw();
+
+    // 如果是第一次开始游戏，显示遮罩层
+    if (!this.firstGameStarted) {
+      const overlay = document.getElementById("gameOverlay");
+      if (overlay) overlay.classList.remove("hidden");
+    }
+  }
+
+  // 开始游戏（点击遮罩层按钮）
+  onStartGame() {
+    // 初始化音效（需要用户交互触发）
+    this.soundManager.init();
+
+    // 隐藏遮罩层
+    document.getElementById("gameOverlay").classList.add("hidden");
+
+    // 启动计时器
+    this.startTimer();
   }
 
   // 保存游戏状态
@@ -443,53 +687,65 @@ class MazeGame {
   }
 
   // 绘制 Ready Go 界面
-  drawReadyScreen() {
-    // 设置默认单元格大小用于图片绘制
-    const readyCellSize = Math.floor(
-      Math.min(this.canvas.width, this.canvas.height) / 10,
-    );
+  // 初始化游戏（不启动计时器）
+  initGame() {
+    // 隐藏所有弹窗
+    this.hideWinMessage();
+    this.hideLoseMessage();
 
-    // 清空画布
-    this.ctx.fillStyle = "#667eea";
-    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    // 获取难度
+    this.cols = parseInt(document.getElementById("difficulty").value);
+    this.rows = this.cols;
 
-    // 设置文字样式
-    this.ctx.textAlign = "center";
-    this.ctx.textBaseline = "middle";
+    // 根据难度设置最大步数
+    if (this.cols === 5) {
+      this.maxSteps = 14;
+    } else if (this.cols === 10) {
+      this.maxSteps = 35;
+    } else {
+      this.maxSteps = 70;
+    }
 
-    // 绘制狐狸表情
-    this.ctx.font = `bold ${readyCellSize * 3}px Arial`;
-    this.ctx.fillText("🦊", this.canvas.width / 2, this.canvas.height / 2 - 80);
+    // 每关倒计时时间（根据不同难度）
+    if (this.cols === 5) {
+      this.levelTime = 15;
+    } else if (this.cols === 10) {
+      this.levelTime = 30;
+    } else {
+      this.levelTime = 60;
+    }
+    this.timer = this.levelTime;
 
-    // 绘制标题文字
-    this.ctx.font = `bold ${readyCellSize * 1.2}px Arial`;
-    this.ctx.fillStyle = "#fff";
-    this.ctx.fillText(
-      "Ready Go!",
-      this.canvas.width / 2,
-      this.canvas.height / 2 - 30,
-    );
+    // 重置游戏状态
+    this.generateMaze();
+    this.player = { x: 0, y: 0 };
+    this.goal = { x: this.cols - 1, y: this.rows - 1 };
+    this.stars = [];
+    this.starsCollected = 0;
+    this.obstacles = [];
+    this.steps = 0;
+    this.gameWon = false;
+    this.gameLost = false;
+    this.gameStarted = true;
 
-    // 绘制提示文字
-    this.ctx.font = `${readyCellSize * 0.6}px Arial`;
-    this.ctx.fillText(
-      '点击"新游戏"开始',
-      this.canvas.width / 2,
-      this.canvas.height / 2 + 30,
-    );
+    // 生成星星位置
+    this.generateStars();
 
-    // 绘制星星装饰
-    this.ctx.font = `${readyCellSize * 0.8}px Arial`;
-    this.ctx.fillText(
-      "⭐",
-      this.canvas.width / 2 - 100,
-      this.canvas.height / 2 + 80,
-    );
-    this.ctx.fillText(
-      "⭐",
-      this.canvas.width / 2 + 100,
-      this.canvas.height / 2 + 80,
-    );
+    // 生成扫把道具
+    this.generateBroom();
+
+    // 根据难度添加路障
+    this.addObstacles();
+
+    // 保存当前关卡的游戏状态
+    this.saveGameState();
+
+    // 更新 UI 和绘制
+    this.updateUI();
+    this.draw();
+
+    // 显示遮罩层
+    document.getElementById("gameOverlay").classList.remove("hidden");
   }
 
   // 下一关
@@ -497,22 +753,31 @@ class MazeGame {
     this.isNextLevelCall = true; // 标记是从下一关按钮调用的
     if (this.currentLevel < this.maxLevels[this.cols]) {
       this.currentLevel++;
-      this.newGame();
     } else {
       // 已是最后一关，重新开始游戏（从第 1 关开始）
       this.currentLevel = 1;
       this.firstGameStarted = true; // 重置为已通关状态
-      this.newGame();
     }
+    this.newGame();
+    // 下一关时自动启动计时器，不需要遮罩层
+    this.startTimer();
     this.updateDifficultyTip(); // 更新提示信息
+  }
+
+  // 重置每关数据记录
+  resetLevelData() {
+    this.collectedStarsPerLevel = [];
+    this.levelTimeSpent = [];
   }
 
   // 重玩当前关卡
   replayLevel() {
     if (this.savedMaze && this.savedMaze.length > 0) {
-      // 隐藏所有弹窗
+      // 隐藏所有弹窗和遮罩
       this.hideWinMessage();
       this.hideLoseMessage();
+      const overlay = document.getElementById("gameOverlay");
+      if (overlay) overlay.classList.add("hidden");
 
       // 停止之前的计时器
       this.stopTimer();
@@ -532,6 +797,16 @@ class MazeGame {
       } else {
         this.maxSteps = 70;
       }
+
+      // 每关倒计时时间
+      if (this.cols === 5) {
+        this.levelTime = 15;
+      } else if (this.cols === 10) {
+        this.levelTime = 30;
+      } else {
+        this.levelTime = 60;
+      }
+      this.timer = this.levelTime;
 
       // 更新关卡提示
       this.updateDifficultyTip();
@@ -883,6 +1158,10 @@ class MazeGame {
   handleKeyPress(e) {
     if (!this.gameStarted || this.gameWon) return;
 
+    // 如果遮罩层显示中，禁止键盘操作
+    const overlay = document.getElementById("gameOverlay");
+    if (overlay && !overlay.classList.contains("hidden")) return;
+
     let dx = 0;
     let dy = 0;
     let handled = false;
@@ -1021,6 +1300,11 @@ class MazeGame {
       if (this.starsCollected >= 2) {
         this.gameWon = true;
         this.stopTimer();
+
+        // 记录当前关卡数据（用于排行榜计算）
+        this.collectedStarsPerLevel.push(this.starsCollected);
+        this.levelTimeSpent.push(this.levelTime - this.timer);
+
         this.showWinMessage();
       } else {
         // 星星不够，显示提示
@@ -1075,27 +1359,69 @@ class MazeGame {
     const message = document.getElementById("winMessage");
     const stats = message.querySelector(".win-stats");
     const buttons = message.querySelector(".win-buttons");
+    const leaderboardInput = message.querySelector(".win-buttons-input");
 
     // 检查是否是最后一个关卡
     const isLastLevel = this.currentLevel === this.maxLevels[this.cols];
 
     if (isLastLevel) {
-      message.className = "win-message hidden last-level-message";
-      // 重置弹窗样式
       message.className = "win-message hidden mode-complete-message";
 
-      // 最后一关关卡通关 - 弹窗样式
+      // 计算总分
+      const totalStars = this.collectedStarsPerLevel.reduce((a, b) => a + b, 0);
+      const totalTime = this.levelTimeSpent.reduce((a, b) => a + b, 0);
+
+      // 最后一关关卡通关 - 显示排行榜输入界面
       stats.innerHTML = `
-      🎊 恭喜完成所有关卡！ 🎊<br><br>
-      太棒了！你已经完成了这个难度的所有关卡！
+        🎊 恭喜完成所有关卡！ 🎊<br><br>
+        太棒了！你已经完成了这个难度的所有关卡！<br><br>
+        总收集星星：${totalStars} 颗<br>
+        总用时：${this.formatTime(totalTime)}
+      `;
+
+      leaderboardInput.innerHTML = `
+            <input
+              type="text"
+              id="playerName"
+              placeholder="请输入您的姓名"
+              maxlength="10"
+              style="
+                padding: 12px 20px;
+                border: 2px solid #667eea;
+                border-radius: 10px;
+                font-size: 1rem;
+                width: 250px;
+              "
+            />
+            <input
+              type="text"
+              id="playerRegion"
+              placeholder="请输入您的地区"
+              maxlength="15"
+              style="
+                padding: 12px 20px;
+                border: 2px solid #667eea;
+                border-radius: 10px;
+                font-size: 1rem;
+                width: 150px;
+              "
+            />
+            <button id="submitLeaderboardBtn" class="btn btn-primary">
+              提交排行榜
+            </button>
     `;
 
-      const nextLevelBtn = document.getElementById("nextLevelBtn");
-      nextLevelBtn.textContent = "重新游戏";
-      nextLevelBtn.className = "btn btn-primary btn-win"; // 设置按钮样式
-      document.getElementById("replayLevelBtn").classList.add("hidden"); // 隐藏重玩按钮
+      buttons.classList.add("hidden"); // 隐藏按钮区域`
+      leaderboardInput.classList.remove("hidden"); // 显示排行榜输入区域
+      // 绑定提交按钮
+      document
+        .getElementById("submitLeaderboardBtn")
+        .addEventListener("click", () => {
+          this.submitLeaderboard(totalStars, totalTime);
+        });
     } else {
       let starsText = "";
+      message.className = "win-message hidden";
       if (this.starsCollected === this.totalStars) {
         starsText = "⭐ 完美！收集了所有星星 ⭐<br>";
       } else {
@@ -1108,6 +1434,9 @@ class MazeGame {
           ${starsText}
           用时：${this.formatTime(this.levelTime - this.timer)}
       `;
+
+      buttons.classList.remove("hidden"); // 隐藏按钮区域`
+      leaderboardInput.classList.add("hidden"); // 隐藏排行榜输入区域
     }
 
     // 显示按钮区域
@@ -1124,25 +1453,79 @@ class MazeGame {
     document.getElementById("winMessage").classList.add("hidden");
   }
 
-  // 显示全部关卡通关消息
-  showModeCompleteMessage() {
+  // 提交排行榜
+  submitLeaderboard(totalStars, totalTime) {
+    const nameInput = document.getElementById("playerName");
+    const regionInput = document.getElementById("playerRegion");
+    const name = nameInput.value.trim();
+    const region = regionInput.value.trim() || "未知";
+
+    if (!name) {
+      alert("请输入姓名！");
+      return;
+    }
+
+    const difficulty = this.cols;
+    const entry = {
+      name,
+      region,
+      stars: totalStars,
+      totalTime,
+      timestamp: Date.now(),
+    };
+
+    // 添加并获取排名
+    this.leaderboardManager.addEntry(difficulty, entry);
+    const rank = this.leaderboardManager.getRank(difficulty, entry);
+
+    // 显示排行榜结果
+    this.showLeaderboardResult(rank, difficulty);
+  }
+
+  // 显示排行榜结果
+  showLeaderboardResult(rank, difficulty) {
+    const leaderboard = this.leaderboardManager.getLeaderboard(difficulty);
     const message = document.getElementById("winMessage");
     const stats = message.querySelector(".win-stats");
-    const buttons = message.querySelector(".win-buttons");
+    const leaderboardInput = message.querySelector(".win-buttons-input");
 
-    // 重置弹窗样式
-    message.className = "win-message hidden mode-complete-message";
-    buttons.style.display = "none";
+    let leaderboardHtml =
+      "<h3 style='margin-bottom: 15px; color: #667eea;'>🏆 本难度排行榜</h3><ul style='text-align: left; max-height: 300px; overflow-y: auto; list-style: none; padding: 0;'>";
+    leaderboard.forEach((entry, i) => {
+      const isCurrentUser = i + 1 === rank;
+      const medal =
+        i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+      leaderboardHtml += `
+        <li style="padding: 10px; border-bottom: 1px solid #f0f0f0; ${isCurrentUser ? "background: #fff3cd;" : ""}">
+          <strong>${medal}</strong> ${entry.name} <span style="color: #999;">(${entry.region})</span> - ⭐ ${entry.stars} - ⏱ ${this.formatTime(entry.totalTime)}
+        </li>
+      `;
+    });
+    leaderboardHtml += "</ul>";
 
     stats.innerHTML = `
-      🎊 恭喜完成所有关卡！ 🎊<br><br>
-      太棒了！你已经完成了这个难度的所有关卡！
+      🎉 恭喜你！获得第 ${rank} 名！ 🎉<br><br>
+      ${leaderboardHtml}
     `;
 
-    // 播放胜利音效
-    this.soundManager.playWin();
+    leaderboardInput.innerHTML = `
+      <button id="newLeaderboardBtn" class="btn btn-primary">再玩一次</button>
+      <button id="closeLeaderboardBtn" class="btn btn-primary">关闭</button>
+    `;
 
-    // 显示弹窗
+    document
+      .getElementById("newLeaderboardBtn")
+      .addEventListener("click", () => {
+        this.newGame();
+      });
+
+    document
+      .getElementById("closeLeaderboardBtn")
+      .addEventListener("click", () => {
+        this.hideWinMessage();
+        // this.newGame();
+      });
+
     message.classList.remove("hidden");
   }
 
@@ -1321,5 +1704,154 @@ class MazeGame {
 
 // 启动游戏
 window.onload = () => {
-  new MazeGame();
+  const game = new MazeGame();
+  // 初始化排行榜面板
+  initLeaderboardPanel();
 };
+
+// 格式时间工具函数
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+}
+
+// 切换排行榜面板显示/隐藏
+function toggleLeaderboardPanel() {
+  const panel = document.getElementById("leaderboardPanel");
+  const isVisible = !panel.classList.contains("hidden");
+
+  if (isVisible) {
+    panel.classList.add("hidden");
+  } else {
+    panel.classList.remove("hidden");
+    // 刷新当前选中标签的排行榜
+    const activeTab = document.querySelector(".tab-btn.active");
+    if (activeTab) {
+      const difficulty = parseInt(activeTab.dataset.difficulty);
+      showLeaderboard(difficulty);
+    }
+  }
+}
+
+// 显示排行榜（供外部调用）
+function showLeaderboard(difficulty) {
+  const content = document.getElementById("leaderboardContent");
+  const lbManager = new LeaderboardManager();
+  const leaderboard = lbManager.getLeaderboard(difficulty);
+
+  if (leaderboard.length === 0) {
+    content.innerHTML =
+      '<p style="text-align: center; color: #999; padding: 20px;">完成所有关卡后查看排名</p>';
+    return;
+  }
+
+  let html = '<ul style="list-style: none; padding: 0; margin: 0;">';
+  leaderboard.forEach((entry, i) => {
+    const medal =
+      i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+    html += `
+      <li style="padding: 12px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center;">
+        <span><strong>${medal}</strong> ${entry.name} <span style="color: #999;">(${entry.region})</span></span>
+        <span>⭐ ${entry.stars} | ⏱ ${formatTime(entry.totalTime)}</span>
+      </li>
+    `;
+  });
+  html += "</ul>";
+  content.innerHTML = html;
+}
+
+// 添加测试数据
+function addTestData() {
+  const testEntries = [
+    {
+      difficulty: 5,
+      name: "玩家 A",
+      region: "北京",
+      stars: 30,
+      totalTime: 300,
+    },
+    {
+      difficulty: 5,
+      name: "玩家 B",
+      region: "上海",
+      stars: 28,
+      totalTime: 320,
+    },
+    {
+      difficulty: 5,
+      name: "玩家 C",
+      region: "广州",
+      stars: 25,
+      totalTime: 350,
+    },
+    {
+      difficulty: 10,
+      name: "玩家 D",
+      region: "深圳",
+      stars: 30,
+      totalTime: 400,
+    },
+    {
+      difficulty: 10,
+      name: "玩家 E",
+      region: "杭州",
+      stars: 27,
+      totalTime: 450,
+    },
+    {
+      difficulty: 15,
+      name: "玩家 F",
+      region: "成都",
+      stars: 30,
+      totalTime: 600,
+    },
+    {
+      difficulty: 15,
+      name: "玩家 G",
+      region: "武汉",
+      stars: 26,
+      totalTime: 650,
+    },
+  ];
+
+  testEntries.forEach((entry) => {
+    const leaderboardManager = new LeaderboardManager();
+    leaderboardManager.addEntry(entry.difficulty, entry);
+  });
+
+  alert("已添加测试数据！请点击排行榜查看。");
+  // 刷新当前选中的标签
+  const activeTab = document.querySelector(".tab-btn.active");
+  if (activeTab) {
+    const difficulty = parseInt(activeTab.dataset.difficulty);
+    showLeaderboard(difficulty);
+  }
+}
+
+// 排行榜面板初始化
+function initLeaderboardPanel() {
+  const panel = document.getElementById("leaderboardPanel");
+  const tabs = document.querySelectorAll(".tab-btn");
+  const content = document.getElementById("leaderboardContent");
+
+  // 切换难度标签
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      tabs.forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      const difficulty = parseInt(tab.dataset.difficulty);
+      showLeaderboard(difficulty);
+    });
+  });
+
+  // 初始化时加载当前选中标签对应的排行榜
+  const activeTab = document.querySelector(".tab-btn.active");
+  if (activeTab) {
+    const difficulty = parseInt(activeTab.dataset.difficulty);
+    showLeaderboard(difficulty);
+  }
+
+  // 存储 game 实例以便排行榜访问
+  window.gameInstance = game;
+}

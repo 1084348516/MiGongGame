@@ -23,6 +23,10 @@
           🎮 <span id="reStartGame">开始游戏</span>
         </button>
         <button id="muteBtn" class="btn btn-muted">🔊 静音</button>
+        <button id="leaderboardBtn" class="btn btn-primary">🏆 排行榜</button>
+        <button id="addTestDataBtn" class="btn btn-muted test-data hidden">
+          🧪 添加测试数据
+        </button>
       </div>
       <div class="difficulty-tip" id="difficultyTip"></div>
 
@@ -51,6 +55,13 @@
 
       <div class="game-wrapper">
         <canvas id="gameCanvas"></canvas>
+        <!-- 开始游戏遮罩层 -->
+        <div class="game-overlay hidden" id="gameOverlay">
+          <div class="overlay-content">
+            <h2>🎮 迷宫探险大冒险</h2>
+            <button id="startGameBtn" class="btn btn-start">开始游戏</button>
+          </div>
+        </div>
       </div>
 
       <div class="instructions">
@@ -64,16 +75,30 @@
         </ul>
       </div>
 
+      <!-- 排行榜面板 -->
+      <div class="leaderboard-panel" id="leaderboardPanel">
+        <h3>🏆 排行榜</h3>
+        <div class="leaderboard-tabs">
+          <button class="tab-btn active" data-difficulty="5">简单</button>
+          <button class="tab-btn" data-difficulty="10">中等</button>
+          <button class="tab-btn" data-difficulty="15">困难</button>
+        </div>
+        <div class="leaderboard-content" id="leaderboardContent">
+          <p style="text-align: center; color: #999">完成所有关卡后查看排名</p>
+        </div>
+      </div>
+
       <div id="winMessage" class="win-message hidden">
         <div class="win-content">
           <h2>🎉 恭喜获胜！🎉</h2>
           <p class="win-stats"></p>
-          <div class="win-buttons">
+          <div class="win-buttons hidden" id="winButtons">
             <button id="nextLevelBtn" class="btn btn-primary">下一关</button>
             <button id="replayLevelBtn" class="btn btn-primary">
               重玩本关
             </button>
           </div>
+          <div class="win-buttons-input hidden" id="leaderboardInput"></div>
         </div>
       </div>
 
