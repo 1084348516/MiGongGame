@@ -535,6 +535,7 @@ kbd {
 .leaderboard-content li:nth-child(1) {
   background: linear-gradient(135deg, #fff9e6 0%, #fff3cd 100%);
   font-weight: bold;
+  color: #000;
 }
 
 .leaderboard-content li:nth-child(2) {

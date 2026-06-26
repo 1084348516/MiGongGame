@@ -242,9 +242,12 @@ class MazeGame {
     this.maxLevels = { 5: 10, 10: 10, 15: 10 }; // 每个难度 10 个关卡
     this.totalBrooms = 0; // 累计扫把总数（跨关卡）
     this.firstGameStarted = false; // 是否第一次开始游戏
+    this.accumulatedStars = 0; // 累计收集星星总数
     this.isNextLevelCall = false; // 是否从下一关按钮调用
+    this.prevCols = 10; // 记录上一次的难度（格子数）
     this.levelTime = 0; // 当前关卡剩余时间
     this.timeResetOnLevelChange = true; // 是否每关重置时间
+    this.levelStartTime = 0; // 当前关卡开始的时间戳
 
     // 游戏配置
     this.cellSize = 0;
@@ -274,9 +277,9 @@ class MazeGame {
     this.savedObstacles = [];
     this.savedBroomItem = null;
 
-    // 每关数据记录（用于排行榜计算）
-    this.collectedStarsPerLevel = [];
-    this.levelTimeSpent = [];
+    // 每关数据记录（用于排行榜计算）- 使用 Map 按关卡 ID 存储
+    // key: 关卡 ID (难度 + 关卡号), value: { stars, time }
+    this.levelProgress = new Map();
 
     // 绑定事件
     this.bindEvents();
@@ -295,9 +298,13 @@ class MazeGame {
       .addEventListener("change", () => this.showConfirmRestartDialog());
 
     // 新游戏按钮
-    document
-      .getElementById("newGameBtn")
-      .addEventListener("click", () => this.newGame());
+    document.getElementById("newGameBtn").addEventListener("click", () => {
+      this.newGame();
+      // 启动计时器
+      // 如果遮罩层显示中，禁止键盘操作
+      const overlay = document.getElementById("gameOverlay");
+      if (overlay && overlay.classList.contains("hidden")) this.startTimer();
+    });
 
     // 静音按钮
     document.getElementById("muteBtn").addEventListener("click", () => {
@@ -338,6 +345,7 @@ class MazeGame {
     if (document.getElementById("playAgainBtn")) {
       document.getElementById("playAgainBtn").addEventListener("click", () => {
         this.hideWinMessage();
+        this.accumulatedStars = 0; // 再玩一次时重置累计星星
         this.newGame();
         // 再玩一次要启动计时器
         this.startTimer();
@@ -347,6 +355,7 @@ class MazeGame {
     // 重新开始按钮（失败时使用）
     document.getElementById("restartBtn").addEventListener("click", () => {
       this.currentLevel = 1;
+      this.accumulatedStars = 0; // 重新开始游戏时重置累计星星
       this.gameLost = false;
       this.newGame();
       // 失败后重新开始要启动计时器
@@ -468,6 +477,7 @@ class MazeGame {
       dialog
         .querySelector("#confirmRestartBtn")
         .addEventListener("click", () => {
+          this.accumulatedStars = 0; // 切换难度时重置总星星数
           this.performDifficultyChange();
           dialog.remove();
         });
@@ -497,6 +507,7 @@ class MazeGame {
       // 记录当前难度
       const currentCols = this.cols;
       // 重置状态
+      this.prevCols = newCols;
       this.firstGameStarted = false;
       this.currentLevel = 1;
       this.isNextLevelCall = false;
@@ -562,6 +573,10 @@ class MazeGame {
   }
 
   newGame() {
+    // 记录是否是下一关调用（在修改 isNextLevelCall 之前保存）
+    const isNextLevel = this.isNextLevelCall;
+    const currentCols = this.cols;
+
     // 点击新游戏按钮或切换难度时，重置关卡为 1，并且重置为已通关状态
     if (!this.isNextLevelCall) {
       this.currentLevel = 1;
@@ -569,8 +584,25 @@ class MazeGame {
       document.getElementById("reStartGame").textContent = "重新开始"; // 更新按钮文本
     }
     this.isNextLevelCall = false;
-    // 切换难度或重新开始时必须重置每关数据记录
-    this.resetLevelData();
+
+    // 重置累计星星数的逻辑：
+    // - 切换难度时重置（currentCols !== this.prevCols）
+    // - 第一次开始游戏时重置（!this.firstGameStarted）
+    // - 重新开始游戏时重置（失败后，isNextLevel 为 false）
+    // - 下一关时不重置（isNextLevel 为 true 且难度不变）
+    if (
+      currentCols !== this.prevCols ||
+      !this.firstGameStarted ||
+      !isNextLevel
+    ) {
+      this.accumulatedStars = 0;
+      // 只在切换难度或重新开始游戏时清空关卡数据记录
+      this.resetLevelData();
+    }
+    // 下一关时不重置关卡数据记录，保留已累计的数据
+
+    // 更新上次难度
+    this.prevCols = currentCols;
 
     // 隐藏所有弹窗
     this.hideWinMessage();
@@ -603,6 +635,7 @@ class MazeGame {
       this.levelTime = 60; // 困难：60 秒（1 分钟）
     }
     this.timer = this.levelTime; // 倒计时初始值
+    this.levelStartTime = Date.now(); // 记录关卡开始时间
 
     // 更新关卡提示
     this.updateDifficultyTip();
@@ -657,6 +690,8 @@ class MazeGame {
 
     // 隐藏遮罩层
     document.getElementById("gameOverlay").classList.add("hidden");
+
+    this.levelStartTime = Date.now(); // 记录关卡开始时间
 
     // 启动计时器
     this.startTimer();
@@ -740,8 +775,16 @@ class MazeGame {
     // 保存当前关卡的游戏状态
     this.saveGameState();
 
-    // 更新 UI 和绘制
+    // 更新 UI
     this.updateUI();
+
+    // 计算单元格大小并设置 canvas
+    const maxSize = Math.min(window.innerWidth - 100, 600);
+    this.cellSize = Math.floor(maxSize / this.cols);
+    this.canvas.width = this.cellSize * this.cols;
+    this.canvas.height = this.cellSize * this.rows;
+
+    // 绘制游戏
     this.draw();
 
     // 显示遮罩层
@@ -757,8 +800,13 @@ class MazeGame {
       // 已是最后一关，重新开始游戏（从第 1 关开始）
       this.currentLevel = 1;
       this.firstGameStarted = true; // 重置为已通关状态
+      // 重新开始游戏时清除所有进度记录
+      this.levelProgress.clear();
+      this.accumulatedStars = 0;
+      this.accumulatedTime = 0;
     }
     this.newGame();
+    // 下一关时不重置累计星星总数（保留累计星星）
     // 下一关时自动启动计时器，不需要遮罩层
     this.startTimer();
     this.updateDifficultyTip(); // 更新提示信息
@@ -766,8 +814,7 @@ class MazeGame {
 
   // 重置每关数据记录
   resetLevelData() {
-    this.collectedStarsPerLevel = [];
-    this.levelTimeSpent = [];
+    this.levelProgress.clear();
   }
 
   // 重玩当前关卡
@@ -781,6 +828,16 @@ class MazeGame {
 
       // 停止之前的计时器
       this.stopTimer();
+
+      // 重玩关卡时，移除该关卡的旧记录
+      // 这样可以确保重玩不计算在总时间中
+      const levelKey = `${this.cols}_${this.currentLevel}`;
+      if (this.levelProgress.has(levelKey)) {
+        const prevData = this.levelProgress.get(levelKey);
+        this.accumulatedStars -= prevData.stars;
+        this.accumulatedTime -= prevData.time;
+        this.levelProgress.delete(levelKey);
+      }
 
       // 初始化音效（需要用户交互触发）
       this.soundManager.init();
@@ -834,6 +891,7 @@ class MazeGame {
       this.updateUI();
 
       // 启动计时器
+      this.levelStartTime = Date.now(); // 记录关卡开始时间
       this.startTimer();
 
       // 绘制游戏
@@ -1244,7 +1302,7 @@ class MazeGame {
     this.checkBroomCollection();
 
     // 检查步数是否耗尽（失败显示弹窗，等待用户点击重新开始）
-    if (this.steps >= this.maxSteps) {
+    if (this.steps > this.maxSteps) {
       this.gameLost = true;
       this.stopTimer();
       // 显示失败弹窗
@@ -1273,6 +1331,7 @@ class MazeGame {
       ) {
         this.stars.splice(i, 1);
         this.starsCollected++;
+        this.accumulatedStars++;
         this.soundManager.playStar();
         break;
       }
@@ -1302,8 +1361,12 @@ class MazeGame {
         this.stopTimer();
 
         // 记录当前关卡数据（用于排行榜计算）
-        this.collectedStarsPerLevel.push(this.starsCollected);
-        this.levelTimeSpent.push(this.levelTime - this.timer);
+        // 使用关卡 ID 作为 key，重玩时覆盖旧记录
+        const levelKey = `${this.cols}_${this.currentLevel}`;
+        this.levelProgress.set(levelKey, {
+          stars: this.starsCollected,
+          time: this.levelTime - this.timer
+        });
 
         this.showWinMessage();
       } else {
@@ -1344,6 +1407,7 @@ class MazeGame {
     document.getElementById("timer").textContent = this.formatTime(this.timer);
     const remainingSteps = Math.max(0, this.maxSteps - this.steps);
     document.getElementById("remainingSteps").textContent = remainingSteps;
+    document.getElementById("totalStars").textContent = this.accumulatedStars;
   }
 
   formatTime(seconds) {
@@ -1367,9 +1431,13 @@ class MazeGame {
     if (isLastLevel) {
       message.className = "win-message hidden mode-complete-message";
 
-      // 计算总分
-      const totalStars = this.collectedStarsPerLevel.reduce((a, b) => a + b, 0);
-      const totalTime = this.levelTimeSpent.reduce((a, b) => a + b, 0);
+      // 计算总分（遍历 Map 中所有关卡的记录）
+      let totalStars = 0;
+      let totalTime = 0;
+      for (const data of this.levelProgress.values()) {
+        totalStars += data.stars;
+        totalTime += data.time;
+      }
 
       // 最后一关关卡通关 - 显示排行榜输入界面
       stats.innerHTML = `
@@ -1429,10 +1497,11 @@ class MazeGame {
       }
 
       // 普通关卡通关 - 原有弹窗样式
+      const timeSpent = Math.floor((Date.now() - this.levelStartTime) / 1000);
       stats.innerHTML = `
           步数：${this.steps}<br>
           ${starsText}
-          用时：${this.formatTime(this.levelTime - this.timer)}
+          用时：${this.formatTime(timeSpent)}
       `;
 
       buttons.classList.remove("hidden"); // 隐藏按钮区域`
@@ -1517,13 +1586,19 @@ class MazeGame {
       .getElementById("newLeaderboardBtn")
       .addEventListener("click", () => {
         this.newGame();
+        this.startTimer(); // 重新开始游戏时启动计时器
       });
 
     document
       .getElementById("closeLeaderboardBtn")
       .addEventListener("click", () => {
         this.hideWinMessage();
-        // this.newGame();
+        // 刷新排行榜面板显示
+        const activeTab = document.querySelector(".tab-btn.active");
+        if (activeTab) {
+          const difficulty = parseInt(activeTab.dataset.difficulty);
+          showLeaderboard(difficulty);
+        }
       });
 
     message.classList.remove("hidden");
