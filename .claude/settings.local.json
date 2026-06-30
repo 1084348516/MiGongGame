@@ -9,7 +9,8 @@
       "Bash(sed -i 's/确保锤子不在起点/确保扫把不在起点/g' game.js)",
       "Bash(sed -i 's/确保不与星星和锤子重叠/确保不与星星和扫把重叠/g' game.js)",
       "Bash(python *)",
-      "Bash(dir C:\\\\Susie\\\\project\\\\learning\\\\claude-code\\\\learning *)"
+      "Bash(dir C:\\\\Susie\\\\project\\\\learning\\\\claude-code\\\\learning *)",
+      "Bash(start *)"
     ]
   }
 }

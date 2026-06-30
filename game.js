@@ -410,6 +410,13 @@ class MazeGame {
     return tips[cols]?.[level] || "🎮 开始游戏吧！";
   }
 
+  setDifficultyTipVisible(visible) {
+    const tipElement = document.getElementById("difficultyTip");
+    if (tipElement) {
+      tipElement.style.display = visible ? "" : "none";
+    }
+  }
+
   updateDifficultyTip() {
     const tipElement = document.getElementById("difficultyTip");
     if (tipElement) {
@@ -568,7 +575,10 @@ class MazeGame {
 
       // 显示遮罩层
       const overlay = document.getElementById("gameOverlay");
-      if (overlay) overlay.classList.remove("hidden");
+      if (overlay) {
+        overlay.classList.remove("hidden");
+        this.setDifficultyTipVisible(false);
+      }
     }
   }
 
@@ -679,7 +689,10 @@ class MazeGame {
     // 如果是第一次开始游戏，显示遮罩层
     if (!this.firstGameStarted) {
       const overlay = document.getElementById("gameOverlay");
-      if (overlay) overlay.classList.remove("hidden");
+      if (overlay) {
+        overlay.classList.remove("hidden");
+        this.setDifficultyTipVisible(false);
+      }
     }
   }
 
@@ -689,7 +702,10 @@ class MazeGame {
     this.soundManager.init();
 
     // 隐藏遮罩层
-    document.getElementById("gameOverlay").classList.add("hidden");
+    const overlay = document.getElementById("gameOverlay");
+    if (overlay) overlay.classList.add("hidden");
+    this.updateDifficultyTip();
+    this.setDifficultyTipVisible(true);
 
     this.levelStartTime = Date.now(); // 记录关卡开始时间
 
@@ -788,7 +804,11 @@ class MazeGame {
     this.draw();
 
     // 显示遮罩层
-    document.getElementById("gameOverlay").classList.remove("hidden");
+    const overlay = document.getElementById("gameOverlay");
+    if (overlay) {
+      overlay.classList.remove("hidden");
+      this.setDifficultyTipVisible(false);
+    }
   }
 
   // 下一关
@@ -825,6 +845,7 @@ class MazeGame {
       this.hideLoseMessage();
       const overlay = document.getElementById("gameOverlay");
       if (overlay) overlay.classList.add("hidden");
+      this.setDifficultyTipVisible(true);
 
       // 停止之前的计时器
       this.stopTimer();
