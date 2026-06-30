@@ -1365,7 +1365,7 @@ class MazeGame {
         const levelKey = `${this.cols}_${this.currentLevel}`;
         this.levelProgress.set(levelKey, {
           stars: this.starsCollected,
-          time: this.levelTime - this.timer
+          time: this.levelTime - this.timer,
         });
 
         this.showWinMessage();
@@ -1565,7 +1565,7 @@ class MazeGame {
       const medal =
         i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
       leaderboardHtml += `
-        <li style="padding: 10px; border-bottom: 1px solid #f0f0f0; ${isCurrentUser ? "background: #fff3cd;" : ""}">
+        <li style="padding: 10px; border-bottom: 1px solid #f0f0f0; ${isCurrentUser ? "background: #fff3cd; color:#000" : ""}">
           <strong>${medal}</strong> ${entry.name} <span style="color: #999;">(${entry.region})</span> - ⭐ ${entry.stars} - ⏱ ${this.formatTime(entry.totalTime)}
         </li>
       `;
